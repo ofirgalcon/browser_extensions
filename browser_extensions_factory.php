@@ -11,6 +11,7 @@ $factory->define(Browser_extensions_model::class, function (Faker\Generator $fak
         'description' => $faker->company(),
         'developer' => $faker->word(),
         'user' => $faker->word(),
+        'profile' => $faker->randomElement(['Default', 'Profile 1', 'Profile 2']),
         'extension_path' => $faker->word(),
     ];
 });

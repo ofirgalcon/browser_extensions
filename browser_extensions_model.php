@@ -13,6 +13,7 @@ class Browser_extensions_model extends Eloquent
 		'version',
 		'description',
 		'browser',
+		'profile',
 		'date_installed',
 		'developer',
 		'enabled',

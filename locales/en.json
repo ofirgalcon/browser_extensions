@@ -6,6 +6,7 @@
     "version": "Version",
     "description": "Description",
     "browser": "Browser",
+    "profile": "Profile",
     "date_installed": "Install Date",
     "developer": "Developer",
     "enabled": "Enabled",

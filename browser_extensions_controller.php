@@ -33,8 +33,9 @@ class Browser_extensions_controller extends Module_controller
     public function get_data($serial_number)
     {
         jsonView(
-            Browser_extensions_model::selectRaw('name, version, extension_id, user, browser, date_installed, developer, enabled, extension_path, description')
+            Browser_extensions_model::selectRaw('name, version, extension_id, user, browser, profile, date_installed, developer, enabled, description, extension_path')
                 ->where('browser_extensions.serial_number', $serial_number)
+                ->orderBy('name', 'asc')
                 ->filter()
                 ->get()
                 ->toArray()

@@ -12,6 +12,7 @@ table:
   - {i18n_header: browser_extensions.extension_id, column: browser_extensions.extension_id}
   - {i18n_header: browser_extensions.user, column: browser_extensions.user}
   - {i18n_header: browser_extensions.browser, column: browser_extensions.browser}
+  - {i18n_header: browser_extensions.profile, column: browser_extensions.profile}
   - {i18n_header: browser_extensions.date_installed, column: browser_extensions.date_installed, formatter: timestampToMoment}
   - {i18n_header: browser_extensions.developer, column: browser_extensions.developer}
   - {i18n_header: browser_extensions.enabled, column: browser_extensions.enabled, formatter: binaryYesNo}
