@@ -6,14 +6,17 @@ import sys
 import re
 import glob
 import json
+# import logging
 
 sys.path.insert(0, '/usr/local/munki')
 sys.path.insert(0, '/usr/local/munkireport')
 
 from munkilib import FoundationPlist
 
-def get_users():
+# Configure logging
+# logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def get_users():
     # Get all users' home folders
     cmd = ['dscl', '.', '-readall', '/Users', 'NFSHomeDirectory']
     proc = subprocess.Popen(cmd, shell=False, bufsize=-1,
@@ -26,7 +29,9 @@ def get_users():
     for user in output.decode().split('\n'):
         if 'NFSHomeDirectory' in user and '/var/empty' not in user:
             userpath = user.replace("NFSHomeDirectory: ", "")
-            users.append(user.replace("NFSHomeDirectory: ", ""))
+            # Exclude system and service accounts
+            if userpath.startswith('/Users/') and not userpath.startswith('/Users/Shared'):
+                users.append(userpath)
 
     return users
 
@@ -65,7 +70,8 @@ def process_chrome(chrome_extension, user, browser, profile=None):
             extension_info['name'] = extension_manifest[item]
 
     path_dict = chrome_extension.split('/')
-    extension_info['extension_id'] = path_dict[-3:][0]
+    extension_id = path_dict[-3:][0]
+    extension_info['extension_id'] = extension_id
     extension_info['user'] = user
     extension_info['date_installed'] = str(int(os.path.getmtime(chrome_extension)))
     extension_info['browser'] = browser
@@ -76,6 +82,46 @@ def process_chrome(chrome_extension, user, browser, profile=None):
     
     # Store extension path
     extension_info['extension_path'] = chrome_extension.replace("manifest.json","")
+    
+    # Check for enabled status in Preferences files
+    try:
+        # Determine the profile directory path
+        profile_dir = os.path.dirname(os.path.dirname(os.path.dirname(chrome_extension)))
+        
+        # Default to enabled if we can't determine the state
+        extension_info['enabled'] = True
+        
+        # Try to read Secure Preferences file first (more likely to contain extension state)
+        secure_preferences_path = os.path.join(profile_dir, "Secure Preferences")
+        if os.path.exists(secure_preferences_path):
+            with open(secure_preferences_path, 'r') as f:
+                secure_preferences = json.loads(f.read())
+                # Check if extension settings exist
+                if ('extensions' in secure_preferences and 
+                    'settings' in secure_preferences['extensions'] and 
+                    extension_id in secure_preferences['extensions']['settings']):
+                    if 'state' in secure_preferences['extensions']['settings'][extension_id]:
+                        # State is 1 for enabled, 0 for disabled
+                        extension_info['enabled'] = secure_preferences['extensions']['settings'][extension_id]['state'] == 1
+                    # If state is not found, keep the default (True)
+        
+        # If not found in Secure Preferences, try regular Preferences
+        if extension_info['enabled'] is True:  # Only check if we haven't found a disabled state
+            preferences_path = os.path.join(profile_dir, "Preferences")
+            if os.path.exists(preferences_path):
+                with open(preferences_path, 'r') as f:
+                    preferences = json.loads(f.read())
+                    # Check if extension settings exist
+                    if ('extensions' in preferences and 
+                        'settings' in preferences['extensions'] and 
+                        extension_id in preferences['extensions']['settings']):
+                        if 'state' in preferences['extensions']['settings'][extension_id]:
+                            # State is 1 for enabled, 0 for disabled
+                            extension_info['enabled'] = preferences['extensions']['settings'][extension_id]['state'] == 1
+                        # If state is not found, keep the default (True)
+    except Exception as e:
+        # Default to True if there's any error reading the preferences
+        extension_info['enabled'] = True
         
     return extension_info
 
@@ -147,16 +193,20 @@ def process_safari(safari_plist_path, user):
             # Keep the original extension ID
             extension_info['extension_id'] = extension_id
             
-            # Extract name from the bundle identifier (com.example.extension -> extension)
-            # Try to get a more user-friendly name
-            clean_id = extension_id.split(' (')[0] if ' (' in extension_id else extension_id
-            name_parts = clean_id.split('.')
-            if len(name_parts) > 1:
-                # Get the last meaningful part of the bundle ID
-                extension_info['name'] = name_parts[-2].capitalize()
-            else:
-                extension_info['name'] = clean_id
-                
+            # Extract name from the key (e.g., com.example.extension -> Example)
+            clean_id = extension_id.split(' ')[0].split('(')[0]
+            name_parts = clean_id.split('.')[:-1]  # Ignore the last part
+
+            # Remove specific words
+            unwanted_words = {'com', 'org', 'mac', 'macos', 'extension', 'safari'}
+            name_parts = [part for part in name_parts if part.lower() not in unwanted_words]
+
+            # Use the remaining parts to construct the name
+            name = ' '.join(name_parts).replace('-', ' ')
+
+            # Capitalize each word in the name
+            extension_info['name'] = ' '.join(word.capitalize() for word in name.split())
+            
             # Check if extension is enabled
             if 'Enabled' in extension_data:
                 extension_info['enabled'] = extension_data['Enabled']
@@ -269,7 +319,7 @@ def process_browsers(users):
                         unique_key = f"{extension_data['user']}|{extension_data['browser']}|{extension_data['profile']}|{extension_data['extension_id']}"
                         
                         # Only add if we haven't seen this extension before, or if it's newer
-                        if unique_key not in unique_extensions or int(extension_data['date_installed']) > int(unique_extensions[unique_key]['date_installed']):
+                        if unique_key not in unique_extensions or int(float(extension_data['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
                             unique_extensions[unique_key] = extension_data
 
         # Check for Edge extensions in all profiles
@@ -292,7 +342,7 @@ def process_browsers(users):
                         unique_key = f"{extension_data['user']}|{extension_data['browser']}|{extension_data['profile']}|{extension_data['extension_id']}"
                         
                         # Only add if we haven't seen this extension before, or if it's newer
-                        if unique_key not in unique_extensions or int(extension_data['date_installed']) > int(unique_extensions[unique_key]['date_installed']):
+                        if unique_key not in unique_extensions or int(float(extension_data['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
                             unique_extensions[unique_key] = extension_data
 
         # Check for Firefox extensions
@@ -309,28 +359,32 @@ def process_browsers(users):
                     unique_key = f"{extension_data['user']}|{extension_data['browser']}|{extension_data['profile']}|{extension_data['extension_id']}"
                     
                     # Only add if we haven't seen this extension before, or if it's newer
-                    if unique_key not in unique_extensions or int(extension_data['date_installed']) > int(unique_extensions[unique_key]['date_installed']):
+                    if unique_key not in unique_extensions or int(float(extension_data['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
                         unique_extensions[unique_key] = extension_data
 
         # Check for Safari extensions - using the original approach
-        safari_extension_path = user+"/Library/Containers/com.apple.Safari/Data/Library/Safari/AppExtensions/Extensions.plist"
-        if os.path.isfile(safari_extension_path):
-            try:
-                safari_extensions = process_safari(safari_extension_path, user.replace("/Users/",""))
-                # Add profile field for consistency with our new approach
-                for extension in safari_extensions:
-                    extension['profile'] = "Default"
-                # Add Safari extensions to the unique extensions dictionary
-                for extension in safari_extensions:
-                    # Create a unique key for this extension
-                    unique_key = f"{extension['user']}|{extension['browser']}|{extension['profile']}|{extension['extension_id']}"
-                    # Only add if we haven't seen this extension before, or if it's newer
-                    if unique_key not in unique_extensions or int(extension['date_installed']) > int(unique_extensions[unique_key]['date_installed']):
-                        unique_extensions[unique_key] = extension
-            except Exception as e:
-                # Only log serious errors, not just empty files
-                if "stream had too few bytes" not in str(e):
-                    print(f"Error processing Safari extensions for {user}: {str(e)}")
+        safari_extension_paths = [
+            user+"/Library/Containers/com.apple.Safari/Data/Library/Safari/AppExtensions/Extensions.plist",
+            user+"/Library/Containers/com.apple.Safari/Data/Library/Safari/WebExtensions/Extensions.plist"
+        ]
+
+        for safari_extension_path in safari_extension_paths:
+            if os.path.isfile(safari_extension_path):
+                try:
+                    safari_extensions = process_safari(safari_extension_path, user.replace("/Users/",""))
+                    # Add profile field for consistency with our new approach
+                    for extension in safari_extensions:
+                        extension['profile'] = "Default"
+                    # Add Safari extensions to the unique extensions dictionary
+                    for extension in safari_extensions:
+                        # Create a unique key for this extension
+                        unique_key = f"{extension['user']}|{extension['browser']}|{extension['profile']}|{extension['extension_id']}"
+                        # Only add if we haven't seen this extension before, or if it's newer
+                        if unique_key not in unique_extensions or int(float(extension['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
+                            unique_extensions[unique_key] = extension
+                except Exception as e:
+                    # Log all errors
+                    pass
 
     # Convert the dictionary of unique extensions to a list
     out = list(unique_extensions.values())
