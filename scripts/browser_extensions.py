@@ -41,9 +41,193 @@ def process_chrome(chrome_extension, user, browser, profile=None):
     
     extension_info = {}
 
+    # Much stricter Google detection
+    is_google = False
+    if extension_manifest.get('id', '').endswith('@google.com'):
+        # Only trust extensions with @google.com if they also have a verified Google OAuth2 client ID
+        if 'oauth2' in extension_manifest:
+            oauth = extension_manifest['oauth2']
+            if isinstance(oauth, dict) and 'client_id' in oauth:
+                client_id = oauth['client_id']
+                if isinstance(client_id, str) and client_id.endswith('.apps.googleusercontent.com'):
+                    is_google = True
+    
+    def clean_and_reorder_name(name):
+        """Helper function to clean and reorder names properly"""
+        if not name:
+            return None
+        
+        # Split into words and clean each word
+        words = name.replace('-', ' ').replace('_', ' ').replace('.', ' ').split()
+        words = [w for w in words if w.lower() not in ['extension', 'plugin']]
+        
+        if not words:
+            return None
+            
+        # Special cases for reordering
+        if len(words) >= 2:
+            # If first word is 'agent' and there are other words, move it to the end
+            if words[0].lower() == 'agent':
+                words = words[1:] + [words[0]]
+            
+        # Capitalize each word
+        words = [word.capitalize() for word in words]
+        return ' '.join(words)
+
+    # First try to get developer from creator field
+    if 'creator' in extension_manifest and extension_manifest['creator']:
+        creator = extension_manifest['creator']
+        if isinstance(creator, str):
+            if '@' in creator:
+                # Handle email format like "Name <email@domain.com>"
+                if '<' in creator and '>' in creator:
+                    extension_info['developer'] = creator.split('<')[0].strip()
+                else:
+                    # Just use the part before @ if it's a plain email
+                    name_part = creator.split('@')[0]
+                    if 'superagent' in name_part.lower():
+                        extension_info['developer'] = 'superagent'
+                    else:
+                        clean_name = clean_and_reorder_name(name_part)
+                        if clean_name:
+                            extension_info['developer'] = clean_name
+            else:
+                extension_info['developer'] = creator
+
+    # If no developer found yet, check author field
+    if 'developer' not in extension_info and 'author' in extension_manifest:
+        author_value = extension_manifest['author']
+        if isinstance(author_value, list):
+            # Try to get a valid developer name from the list
+            for value in author_value:
+                if isinstance(value, str):
+                    clean_name = clean_and_reorder_name(value)
+                    if clean_name and clean_name.lower() not in ['plugin', 'agent', 'extension', 'userscripts']:
+                        extension_info['developer'] = clean_name
+                        break
+        elif isinstance(author_value, str):
+            if author_value.startswith('__MSG_'):
+                # Handle localized author names
+                try:
+                    locale_file = open(chrome_extension.replace("manifest.json", "_locales/"+extension_manifest['default_locale']+"/messages.json"), 'r')
+                    extension_localization = json.loads(locale_file.read().strip())
+                    extension_localization_lower = {k.lower():v for k,v in list(extension_localization.items())}
+                    local_name = author_value.replace("__MSG_","").replace("__","").lower()
+                    author_value = extension_localization_lower[local_name]["message"]
+                except:
+                    author_value = None
+
+            if author_value:
+                # Clean up common unwanted values
+                if author_value.lower() in ['plugin', 'agent', 'extension', 'userscripts']:
+                    pass
+                # Handle email format
+                elif '@' in author_value:
+                    # Special case for superagent
+                    name_part = author_value.split('@')[0]
+                    if 'superagent' in name_part.lower():
+                        extension_info['developer'] = 'superagent'
+                    else:
+                        clean_name = clean_and_reorder_name(name_part)
+                        if clean_name:
+                            extension_info['developer'] = clean_name
+                else:
+                    # Special case for superagent
+                    if 'superagent' in author_value.lower():
+                        extension_info['developer'] = 'superagent'
+                    else:
+                        clean_name = clean_and_reorder_name(author_value)
+                        if clean_name:
+                            extension_info['developer'] = clean_name
+
+        elif isinstance(author_value, dict):
+            # Try different possible fields in the dictionary
+            for field in ['name', 'author', 'developer', 'email']:
+                if field in author_value and isinstance(author_value[field], str):
+                    value = author_value[field]
+                    if 'superagent' in value.lower():
+                        extension_info['developer'] = 'superagent'
+                        break
+                    elif value.lower() not in ['plugin', 'agent', 'extension', 'userscripts']:
+                        clean_name = clean_and_reorder_name(value)
+                        if clean_name:
+                            extension_info['developer'] = clean_name
+                            break
+
     for item in extension_manifest:
         if item == "version":
             extension_info['version'] = extension_manifest[item]
+        
+        elif item in ["author", "developer"]:  # Check both author and developer fields
+            # Handle different types of author/developer field
+            author_value = extension_manifest[item]
+            if isinstance(author_value, list):
+                # Lists are not automatically Google anymore
+                if any(isinstance(x, str) and x.endswith('@google.com') for x in author_value):
+                    is_google = True
+                else:
+                    # Try to get a valid developer name from the list
+                    for value in author_value:
+                        if isinstance(value, str):
+                            clean_name = clean_and_reorder_name(value)
+                            if clean_name and clean_name.lower() not in ['plugin', 'agent', 'extension', 'userscripts']:
+                                extension_info['developer'] = clean_name
+                                break
+            elif isinstance(author_value, str):
+                if author_value.startswith('__MSG_'):
+                    # Handle localized author names
+                    try:
+                        locale_file = open(chrome_extension.replace("manifest.json", "_locales/"+extension_manifest['default_locale']+"/messages.json"), 'r')
+                        extension_localization = json.loads(locale_file.read().strip())
+                        extension_localization_lower = {k.lower():v for k,v in list(extension_localization.items())}
+                        local_name = author_value.replace("__MSG_","").replace("__","").lower()
+                        author_value = extension_localization_lower[local_name]["message"]
+                    except:
+                        author_value = None
+
+                if author_value:
+                    # Clean up common unwanted values
+                    if author_value.lower() in ['plugin', 'agent', 'extension', 'userscripts']:
+                        continue
+                    # Handle email format
+                    if '@' in author_value:
+                        if author_value.endswith('@google.com'):  # Must end with @google.com
+                            is_google = True
+                        else:
+                            # Try to extract name from email or use domain
+                            name_part = author_value.split('@')[0]
+                            # Special case for superagent
+                            if 'superagent' in name_part.lower():
+                                extension_info['developer'] = 'superagent'
+                            else:
+                                clean_name = clean_and_reorder_name(name_part)
+                                if clean_name:
+                                    extension_info['developer'] = clean_name
+                    else:
+                        # Special case for superagent
+                        if 'superagent' in author_value.lower():
+                            extension_info['developer'] = 'superagent'
+                        else:
+                            clean_name = clean_and_reorder_name(author_value)
+                            if clean_name:
+                                extension_info['developer'] = clean_name
+
+            elif isinstance(author_value, dict):
+                # Try different possible fields in the dictionary
+                for field in ['name', 'author', 'developer', 'email']:
+                    if field in author_value and isinstance(author_value[field], str):
+                        value = author_value[field]
+                        if value.endswith('@google.com'):  # Must end with @google.com
+                            is_google = True
+                            break
+                        elif 'superagent' in value.lower():
+                            extension_info['developer'] = 'superagent'
+                            break
+                        elif value.lower() not in ['plugin', 'agent', 'extension', 'userscripts']:
+                            clean_name = clean_and_reorder_name(value)
+                            if clean_name:
+                                extension_info['developer'] = clean_name
+                                break
 
         elif item == "description" and extension_manifest[item].startswith('__MSG'):
             try:
@@ -63,11 +247,13 @@ def process_chrome(chrome_extension, user, browser, profile=None):
                 extension_localization = json.loads(locale_file.read().strip())
                 extension_localization_lower = {k.lower():v for k,v in list(extension_localization.items())}
                 local_name = extension_manifest['name'].replace("__MSG_","").replace("__","").lower()
-                extension_info['name'] = extension_localization_lower[local_name]["message"]
+                raw_name = extension_localization_lower[local_name]["message"]
+                extension_info['name'] = clean_and_reorder_name(raw_name) or raw_name
             except:
-                extension_info['description'] = ""
+                extension_info['name'] = ""
         elif item == "name":
-            extension_info['name'] = extension_manifest[item]
+            raw_name = extension_manifest[item]
+            extension_info['name'] = clean_and_reorder_name(raw_name) or raw_name
 
     path_dict = chrome_extension.split('/')
     extension_id = path_dict[-3:][0]
@@ -83,6 +269,42 @@ def process_chrome(chrome_extension, user, browser, profile=None):
     # Store extension path
     extension_info['extension_path'] = chrome_extension.replace("manifest.json","")
     
+    # Set Google as developer only if we're very confident
+    if is_google:
+        extension_info['developer'] = "Google"
+    elif 'developer' not in extension_info:
+        # First check for known patterns in the extension name (most reliable method)
+        if 'name' in extension_info:
+            name = extension_info['name'].lower() if isinstance(extension_info.get('name'), str) else ""
+            
+            # Check for known patterns
+            if 'okta' in name:
+                extension_info['developer'] = "Okta"
+            # Check for Google
+            elif ('google' in name or '(by google)' in name or name.startswith('google ') or name.endswith(' google')):
+                extension_info['developer'] = "Google"
+            # Check for Gmail, Docs, Sheets
+            elif any(x in name for x in ['gmail', 'google docs', 'google sheets']):
+                extension_info['developer'] = "Google"
+            # Check for Adobe
+            elif name.startswith('adobe '):
+                extension_info['developer'] = "Adobe"
+            # Check for Cisco
+            elif name.startswith('cisco '):
+                extension_info['developer'] = "Cisco"
+        
+        # Only if pattern matching fails, try to get developer from homepage URL
+        if 'developer' not in extension_info and 'homepage_url' in extension_manifest:
+            url = extension_manifest['homepage_url'].lower()
+            if 'github.com/' in url:
+                # Extract username from GitHub URL
+                try:
+                    github_user = url.split('github.com/')[1].split('/')[0]
+                    if github_user and github_user not in ['topics', 'search']:
+                        extension_info['developer'] = github_user
+                except:
+                    pass
+
     # Check for enabled status in Preferences files
     try:
         # Determine the profile directory path
@@ -132,34 +354,118 @@ def process_firefox(firefox_extension, user, firefox_extension_path, profile=Non
     # Store extension path
     extension_info['extension_path'] = firefox_extension_path
 
+    # First check defaultLocale for developer info
+    if 'defaultLocale' in firefox_extension:
+        for locale_item in firefox_extension['defaultLocale']:
+            if locale_item == "description" and firefox_extension['defaultLocale'][locale_item]:
+                extension_info['description'] = firefox_extension['defaultLocale'][locale_item]
+            elif locale_item == "name" and firefox_extension['defaultLocale'][locale_item]:
+                name = firefox_extension['defaultLocale'][locale_item]
+                extension_info['name'] = name
+                # Special case for 1Password
+                if '1password' in name.lower():
+                    extension_info['developer'] = "1Password"
+            elif locale_item == "creator" and firefox_extension['defaultLocale'][locale_item] and 'developer' not in extension_info:
+                # Handle email format: "Name <email@domain.com>"
+                creator = firefox_extension['defaultLocale'][locale_item]
+                if isinstance(creator, str):
+                    # Special case for 1Password
+                    if 'agilebits' in creator.lower() or '1password' in creator.lower():
+                        extension_info['developer'] = "1Password"
+                    elif '<' in creator and '>' in creator:
+                        extension_info['developer'] = creator.split('<')[0].strip()
+                    else:
+                        extension_info['developer'] = creator
+            elif locale_item == "homepageURL" and 'developer' not in extension_info:
+                homepage = firefox_extension['defaultLocale'][locale_item]
+                if 'github.com/' in homepage.lower():
+                    try:
+                        github_user = homepage.split('github.com/')[1].split('/')[0]
+                        if github_user and github_user not in ['topics', 'search']:
+                            extension_info['developer'] = github_user
+                    except:
+                        pass
+
+    # If no developer found in defaultLocale, check other locations
+    if 'developer' not in extension_info:
+        # First priority: Check for known patterns in the extension name
+        if 'name' in extension_info:
+            name = extension_info['name'].lower() if isinstance(extension_info.get('name'), str) else ""
+            
+            # Check for known patterns
+            if 'okta' in name:
+                extension_info['developer'] = "Okta"
+            elif ('google' in name or '(by google)' in name or name.startswith('google ') or name.endswith(' google')):
+                extension_info['developer'] = "Google"
+            elif any(x in name for x in ['gmail', 'google docs', 'google sheets']):
+                extension_info['developer'] = "Google"
+            elif name.startswith('adobe '):
+                extension_info['developer'] = "Adobe"
+            elif name.startswith('cisco '):
+                extension_info['developer'] = "Cisco"
+        
+        # Second priority: Check creator/developer/author fields directly
+        if 'developer' not in extension_info:
+            for field in ['creator', 'developer', 'author']:
+                if field in firefox_extension and firefox_extension[field]:
+                    if isinstance(firefox_extension[field], str):
+                        if '<' in firefox_extension[field] and '>' in firefox_extension[field]:
+                            extension_info['developer'] = firefox_extension[field].split('<')[0].strip()
+                        else:
+                            extension_info['developer'] = firefox_extension[field]
+                        break
+                    elif isinstance(firefox_extension[field], dict) and 'name' in firefox_extension[field]:
+                        extension_info['developer'] = firefox_extension[field]['name']
+                        break
+
+        # Third priority: Try to get from extension ID if still no developer name found
+        if 'developer' not in extension_info and 'id' in firefox_extension:
+            ext_id = firefox_extension['id']
+            if '@' in ext_id:
+                try:
+                    # Extract developer from email format
+                    developer = ext_id.split('@')[0]
+                    if developer and developer.lower() not in ['addon', 'extension', 'firefox', 'mozilla', 'plugin', 'plugiin']:
+                        # Convert dashes/underscores to spaces and capitalize
+                        developer = ' '.join(word.capitalize() for word in developer.replace('-', ' ').replace('_', ' ').split())
+                        extension_info['developer'] = developer
+                except:
+                    pass
+            elif '.' in ext_id:
+                # Try to extract organization name from ID
+                parts = ext_id.split('.')
+                filtered_parts = [p for p in parts if p.lower() not in ['com', 'org', 'net', 'addon', 'extension', 'firefox', 'mozilla', 'plugin', 'plugiin']]
+                if filtered_parts:
+                    # Convert dashes/underscores to spaces and capitalize
+                    developer = ' '.join(word.capitalize() for word in filtered_parts[0].replace('-', ' ').replace('_', ' ').split())
+                    extension_info['developer'] = developer
+
+        # Check if it's a Mozilla extension as last resort
+        if 'developer' not in extension_info:
+            is_mozilla = False
+            if 'homepageURL' in firefox_extension:
+                if 'mozilla.com' in firefox_extension['homepageURL'].lower() or 'mozilla.org' in firefox_extension['homepageURL'].lower():
+                    is_mozilla = True
+            if 'id' in firefox_extension and ('@mozilla' in firefox_extension['id'].lower() or 'mozilla@' in firefox_extension['id'].lower()):
+                is_mozilla = True
+            if is_mozilla:
+                extension_info['developer'] = "Mozilla"
+
+    # Process other standard fields
     for item in firefox_extension:
         if item == "version":
             extension_info['version'] = firefox_extension[item]
-
         elif item == "active":
             extension_info['enabled'] = firefox_extension[item]
-            
         elif item == "installDate" or item == "updateDate":
             extension_info['date_installed'] = str(firefox_extension[item]/1000)
-            
         elif item == "id":
             extension_info['extension_id'] = firefox_extension[item]
-            
         elif item == "path":
             if firefox_extension[item] is None:
                 extension_info['extension_path'] = firefox_extension_path.replace("extensions.json","")
             else:
                 extension_info['extension_path'] = firefox_extension[item]
-            
-        elif item == "defaultLocale":
-            
-            for locale_item in firefox_extension[item]:
-                if locale_item == "description" and firefox_extension[item][locale_item]:
-                    extension_info['description'] = firefox_extension[item][locale_item]
-                elif locale_item == "name" and firefox_extension[item][locale_item]:
-                    extension_info['name'] = firefox_extension[item][locale_item]
-                elif locale_item == "creator" and firefox_extension[item][locale_item]:
-                    extension_info['developer'] = firefox_extension[item][locale_item]
 
     extension_info['user'] = user
     extension_info['browser'] = "Firefox"
@@ -197,15 +503,79 @@ def process_safari(safari_plist_path, user):
             clean_id = extension_id.split(' ')[0].split('(')[0]
             name_parts = clean_id.split('.')[:-1]  # Ignore the last part
 
+            # Try to get the extension name first
             # Remove specific words
             unwanted_words = {'com', 'org', 'mac', 'macos', 'extension', 'safari'}
-            name_parts = [part for part in name_parts if part.lower() not in unwanted_words]
-
-            # Use the remaining parts to construct the name
-            name = ' '.join(name_parts).replace('-', ' ')
-
+            filtered_name_parts = [part for part in name_parts if part.lower() not in unwanted_words]
+            
+            # Remove duplicate words (case insensitive)
+            seen_words = set()
+            unique_parts = []
+            for part in filtered_name_parts:
+                if part.lower() not in seen_words:
+                    seen_words.add(part.lower())
+                    unique_parts.append(part)
+            
+            extension_name = ' '.join(unique_parts).replace('-', ' ')
+            
             # Capitalize each word in the name
-            extension_info['name'] = ' '.join(word.capitalize() for word in name.split())
+            extension_info['name'] = ' '.join(word.capitalize() for word in extension_name.split())
+            
+            # Handle special cases for known extensions
+            if 'lastpass' in extension_info['name'].lower() and 'macdesktop' in extension_info['name'].lower():
+                extension_info['name'] = 'LastPass'
+            elif 'cisco' in extension_info['name'].lower() and 'webex' in extension_info['name'].lower() and 'start' in extension_info['name'].lower():
+                extension_info['name'] = 'Cisco Webex'
+            
+            # Remove duplicate words in the final name (e.g., "Todoist Todoist" -> "Todoist")
+            if extension_info['name']:
+                name_words = extension_info['name'].split()
+                if len(name_words) > 1:
+                    # Check for exact duplicates (case-sensitive)
+                    if len(set(name_words)) < len(name_words):
+                        unique_words = []
+                        seen_words = set()
+                        for word in name_words:
+                            if word.lower() not in seen_words:
+                                seen_words.add(word.lower())
+                                unique_words.append(word)
+                        extension_info['name'] = ' '.join(unique_words)
+            
+            # Now handle the developer name with the correct priority:
+            # 1. Check for pattern matches first (more reliable than ID-based extraction)
+            name = extension_info['name'].lower() if 'name' in extension_info else ""
+            developer_found = False
+            
+            # Check for known patterns
+            if 'okta' in name:
+                extension_info['developer'] = "Okta"
+                developer_found = True
+            elif ('google' in name or '(by google)' in name or name.startswith('google ') or name.endswith(' google')):
+                extension_info['developer'] = "Google"
+                developer_found = True
+            elif any(x in name for x in ['gmail', 'google docs', 'google sheets']):
+                extension_info['developer'] = "Google"
+                developer_found = True
+            elif name.startswith('adobe '):
+                extension_info['developer'] = "Adobe"
+                developer_found = True
+            elif name.startswith('cisco '):
+                extension_info['developer'] = "Cisco"
+                developer_found = True
+            elif 'lastpass' in name:
+                extension_info['developer'] = "LastPass"
+                developer_found = True
+            elif 'todoist' in name:
+                extension_info['developer'] = "Doist"
+                developer_found = True
+            
+            # 2. Only if pattern matching fails, try to extract from ID as last resort
+            if not developer_found and len(name_parts) > 1:
+                for part in name_parts[1:]:  # Start from second part
+                    if part.lower() not in ['com', 'org', 'userscripts', 'net', 'app', 'extension', 'chrome', 'plugin', 'plugiin']:
+                        extension_info['developer'] = part.capitalize()
+                        developer_found = True
+                        break
             
             # Check if extension is enabled
             if 'Enabled' in extension_data:

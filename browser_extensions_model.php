@@ -22,4 +22,15 @@ class Browser_extensions_model extends Eloquent
     ];
 
     public $timestamps = false;
+    
+    /**
+     * Execute a raw query
+     *
+     * @param string $sql SQL query
+     * @return array result
+     */
+    public function rawQuery($sql)
+    {
+        return $this->getConnection()->select($sql);
+    }
 }

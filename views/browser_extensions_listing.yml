@@ -9,7 +9,6 @@ table:
     i18n_header: serial
   - {i18n_header: browser_extensions.name, column: browser_extensions.name}
   - {i18n_header: browser_extensions.version, column: browser_extensions.version}
-  - {i18n_header: browser_extensions.extension_id, column: browser_extensions.extension_id}
   - {i18n_header: browser_extensions.user, column: browser_extensions.user}
   - {i18n_header: browser_extensions.browser, column: browser_extensions.browser}
   - {i18n_header: browser_extensions.profile, column: browser_extensions.profile}
@@ -17,4 +16,5 @@ table:
   - {i18n_header: browser_extensions.developer, column: browser_extensions.developer}
   - {i18n_header: browser_extensions.enabled, column: browser_extensions.enabled, formatter: binaryYesNo}
   - {i18n_header: browser_extensions.description, column: browser_extensions.description}
+  - {i18n_header: browser_extensions.extension_id, column: browser_extensions.extension_id}
   - {i18n_header: browser_extensions.extension_path, column: browser_extensions.extension_path}

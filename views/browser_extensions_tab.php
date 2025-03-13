@@ -4,6 +4,11 @@
         <i class="btn btn-default tab-btn fa fa-list"></i>
     </a>
 </div>
+<div id="report_btn" style="font-size: large; float: right;">
+    <a href="/show/report/browser_extensions/browser_extensions_report" title="Report">
+        <i class="btn btn-default tab-btn fa fa-th"></i>
+    </a>
+</div>
 <h2><i class="fa fa-puzzle-piece"></i> <span data-i18n="browser_extensions.browser_extensions"></span></h2>
 
 <div id="browser_extensions-msg" data-i18n="listing.loading" class="col-lg-12 text-center"></div>

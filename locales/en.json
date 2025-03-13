@@ -11,5 +11,7 @@
     "developer": "Developer",
     "enabled": "Enabled",
     "user": "User",
-    "extension_path": "Extension Path"
+    "extension_path": "Extension Path",
+    "extensions_by_name": "Browser Extensions",
+    "extensions_by_developer": "Extensions by Developer"
 }

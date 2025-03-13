@@ -8,3 +8,14 @@ listings:
     browser_extensions:
         view: browser_extensions_listing
         i18n: browser_extensions.browser_extensions
+
+widgets:
+    browser_extensions_name:
+        view: browser_extensions_name_widget
+    browser_extensions_developer:
+        view: browser_extensions_developer_widget
+
+reports:
+    browser_extensions_report:
+        view: browser_extensions_report
+        i18n: browser_extensions.reporttitle
