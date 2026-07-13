@@ -25,13 +25,18 @@ class Browser_extensions_processor extends Processor
         // Delete previous set
         Browser_extensions_model::where('serial_number', $this->serial_number)->delete();
 
-        // Build list of extension IDs to ignore
+        // Build list of extension IDs to ignore (exact match)
         $extension_id_ignorelist = is_array(conf('browser_extension_id_ignorelist')) ? conf('browser_extension_id_ignorelist') : array();
-        $regex_id = '/^'.implode('|', $extension_id_ignorelist).'$/';
+        $extension_id_ignorelist = array_values(array_filter($extension_id_ignorelist, function ($item) {
+            return is_string($item) && $item !== '';
+        }));
 
-        // Build list of extension names to ignore
+        // Build list of extension names to ignore (case-insensitive exact match)
         $extension_name_ignorelist = is_array(conf('browser_extension_name_ignorelist')) ? conf('browser_extension_name_ignorelist') : array();
-        $regex_name = '/^'.implode('|', $extension_name_ignorelist).'$/';
+        $extension_name_ignorelist = array_values(array_filter($extension_name_ignorelist, function ($item) {
+            return is_string($item) && $item !== '';
+        }));
+        $extension_name_ignoremap = array_flip(array_map('strtolower', $extension_name_ignorelist));
 
 		$parser = new CFPropertyList();
         $parser->parse($plist, CFPropertyList::FORMAT_XML);
@@ -43,13 +48,13 @@ class Browser_extensions_processor extends Processor
         $save_list = [];
         foreach ($parser->toArray() as $extension) {
 
-            // Check if we should skip this extension based on extension ID
-            if (preg_match($regex_id, $extension['extension_id'])) {
+            $extension_id = isset($extension['extension_id']) ? $extension['extension_id'] : '';
+            if ($extension_id !== '' && in_array($extension_id, $extension_id_ignorelist, true)) {
                 continue;
             }     
 
-            // Check if we should skip this extension based on extension name
-            if (preg_match($regex_name, $extension['name'])) {
+            $extension_name = isset($extension['name']) ? $extension['name'] : '';
+            if ($extension_name !== '' && isset($extension_name_ignoremap[strtolower($extension_name)])) {
                 continue;
             }
 

@@ -8,12 +8,17 @@ return [
 |===============================================
 |
 | List of extension IDs to be ignored when processing browser extensions
-| The list is processed using regex
+| The list is processed using exact matches
 |
 */
 'browser_extension_id_ignorelist' => env('BROWSER_EXTENSION_ID_IGNORELIST', [
     'nmmhkkegccagdldgiimedpiccmgmieda', // Chrome Web Store Payments
     'pkedcjkdefgpdelpbcmbmeomcjbeemfm', //	Chrome Media Router
+    'ghbmnnjooekpmoecnnnilnnbdlolhkhi', //	Google Docs Offline
+    // Brave built-in component/extensions
+    // Source: https://raw.githubusercontent.com/brave/brave-core/master/chromium_src/extensions/common/constants.h
+    'mnojpmjdmbbfmejpflffifhffcmidifd', // brave_extension_id (Brave Shields/Brave Extension)
+    'hfnkpimlhhgieaddgfemjhofmfblmnib', // crl_set_extension_id
     '@search.mozilla.org',
     'default-theme@mozilla.org',
     'firefox-compact-light@mozilla.org',
@@ -45,7 +50,7 @@ return [
 |===============================================
 |
 | List of extension names to be ignored when processing browser extensions
-| The list is processed using regex.
+| The list is processed using case-insensitive exact matches.
 |
 */
 

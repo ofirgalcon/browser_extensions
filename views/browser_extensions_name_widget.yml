@@ -2,6 +2,7 @@ type: scrollbox
 widget_id: browser_extensions_name-widget
 api_url: /module/browser_extensions/get_scroll_widget/name
 i18n_title: browser_extensions.extensions_by_name
+i18n_tooltip: "Shows browser extension name distribution across all clients. Each entry displays the extension name and count of installations."
 icon: fa-puzzle-piece
 listing_link: /show/listing/browser_extensions/browser_extensions
 search_key: name

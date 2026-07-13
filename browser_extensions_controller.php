@@ -50,18 +50,29 @@ class Browser_extensions_controller extends Module_controller
      **/
     public function get_scroll_widget($column)
     {
-        // Remove non-column name characters
-        $column = preg_replace("/[^A-Za-z0-9_\-]]/", '', $column);
+        // Sanitize input - fix regex pattern
+        $column = preg_replace("/[^A-Za-z0-9_\-]+/", '', $column);
+        
+        // Whitelist allowed columns to prevent column injection
+        $allowed_columns = [
+            'extension_id', 'name', 'version', 'browser', 'profile', 'date_installed',
+            'description', 'developer', 'enabled', 'user', 'extension_path'
+        ];
+        
+        if (empty($column) || !in_array($column, $allowed_columns)) {
+            jsonView([]);
+            return;
+        }
 
-        $sql = "SELECT COUNT(CASE WHEN ".$column." <> '' AND ".$column." IS NOT NULL THEN 1 END) AS count, ".$column." 
-                FROM browser_extensions
-                LEFT JOIN reportdata USING (serial_number)
-                ".get_machine_group_filter()."
-                AND ".$column." <> '' AND ".$column." IS NOT NULL 
-                GROUP BY ".$column."
-                ORDER BY count DESC";
+        $query = Browser_extensions_model::selectRaw("COUNT(*) AS count, `$column`")
+            ->whereNotNull($column)
+            ->where($column, '<>', '')
+            ->groupBy($column)
+            ->orderBy('count', 'desc')
+            ->filter()
+            ->get()
+            ->toArray();
 
-        $queryobj = new Browser_extensions_model;
-        jsonView($queryobj->rawQuery($sql));
+        jsonView($query);
     }
 } // End class Browser_extensions_controller

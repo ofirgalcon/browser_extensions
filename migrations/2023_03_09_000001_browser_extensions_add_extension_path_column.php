@@ -1,4 +1,5 @@
 <?php
+
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Capsule\Manager as Capsule;
@@ -22,4 +23,4 @@ class BrowserExtensionsAddExtensionPathColumn extends Migration
             $table->dropColumn('extension_path');
         });
     }
-}
+} 

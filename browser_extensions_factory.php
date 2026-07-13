@@ -4,7 +4,7 @@ $factory->define(Browser_extensions_model::class, function (Faker\Generator $fak
     return [
         'name' => $faker->word(),
         'extension_id' => $faker->word(),
-        'browser' => $faker->randomElement(['Firefox', 'Google Chrome']),
+        'browser' => $faker->randomElement(['Firefox', 'Google Chrome', 'Microsoft Edge', 'Brave', 'Safari']),
         'date_installed' => $faker->dateTimeBetween('-4 months', 'now'),
         'version' => $faker->numberBetween(0, 100),
         'enabled' => $faker->boolean(),

@@ -13,12 +13,46 @@ sys.path.insert(0, '/usr/local/munkireport')
 
 from munkilib import FoundationPlist
 
+def _is_plist_mapping(obj):
+    """True for Python dicts and Foundation NSDictionary/NSMutableDictionary objects."""
+    return hasattr(obj, 'keys') and callable(getattr(obj, 'keys', None))
+
+_CHROMIUM_PROFILE_SETTINGS_CACHE = {}
+
+def _get_chromium_extension_settings(profile_dir):
+    """Load Chromium extension settings once per profile directory."""
+    if profile_dir in _CHROMIUM_PROFILE_SETTINGS_CACHE:
+        return _CHROMIUM_PROFILE_SETTINGS_CACHE[profile_dir]
+
+    combined_settings = {}
+    for preferences_file in ("Secure Preferences", "Preferences"):
+        preferences_path = os.path.join(profile_dir, preferences_file)
+        if not os.path.exists(preferences_path):
+            continue
+
+        try:
+            with open(preferences_path, 'r') as pref_file:
+                preferences = json.loads(pref_file.read())
+        except (OSError, ValueError, TypeError):
+            continue
+
+        extension_settings = preferences.get('extensions', {}).get('settings', {})
+        if not isinstance(extension_settings, dict):
+            continue
+
+        for extension_id, extension_data in extension_settings.items():
+            if extension_id not in combined_settings and isinstance(extension_data, dict):
+                combined_settings[extension_id] = extension_data
+
+    _CHROMIUM_PROFILE_SETTINGS_CACHE[profile_dir] = combined_settings
+    return combined_settings
+
 # Configure logging
 # logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_users():
     # Get all users' home folders
-    cmd = ['dscl', '.', '-readall', '/Users', 'NFSHomeDirectory']
+    cmd = ['/usr/bin/dscl', '.', '-readall', '/Users', 'NFSHomeDirectory']
     proc = subprocess.Popen(cmd, shell=False, bufsize=-1,
                             stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -37,7 +71,11 @@ def get_users():
 
 def process_chrome(chrome_extension, user, browser, profile=None):
 
-    extension_manifest = json.loads(open(chrome_extension, 'r').read().strip())
+    try:
+        with open(chrome_extension, 'r') as manifest_file:
+            extension_manifest = json.loads(manifest_file.read().strip())
+    except (OSError, ValueError, TypeError):
+        return None
     
     extension_info = {}
 
@@ -305,45 +343,13 @@ def process_chrome(chrome_extension, user, browser, profile=None):
                 except:
                     pass
 
-    # Check for enabled status in Preferences files
-    try:
-        # Determine the profile directory path
-        profile_dir = os.path.dirname(os.path.dirname(os.path.dirname(chrome_extension)))
-        
-        # Default to enabled if we can't determine the state
-        extension_info['enabled'] = True
-        
-        # Try to read Secure Preferences file first (more likely to contain extension state)
-        secure_preferences_path = os.path.join(profile_dir, "Secure Preferences")
-        if os.path.exists(secure_preferences_path):
-            with open(secure_preferences_path, 'r') as f:
-                secure_preferences = json.loads(f.read())
-                # Check if extension settings exist
-                if ('extensions' in secure_preferences and 
-                    'settings' in secure_preferences['extensions'] and 
-                    extension_id in secure_preferences['extensions']['settings']):
-                    if 'state' in secure_preferences['extensions']['settings'][extension_id]:
-                        # State is 1 for enabled, 0 for disabled
-                        extension_info['enabled'] = secure_preferences['extensions']['settings'][extension_id]['state'] == 1
-                    # If state is not found, keep the default (True)
-        
-        # If not found in Secure Preferences, try regular Preferences
-        if extension_info['enabled'] is True:  # Only check if we haven't found a disabled state
-            preferences_path = os.path.join(profile_dir, "Preferences")
-            if os.path.exists(preferences_path):
-                with open(preferences_path, 'r') as f:
-                    preferences = json.loads(f.read())
-                    # Check if extension settings exist
-                    if ('extensions' in preferences and 
-                        'settings' in preferences['extensions'] and 
-                        extension_id in preferences['extensions']['settings']):
-                        if 'state' in preferences['extensions']['settings'][extension_id]:
-                            # State is 1 for enabled, 0 for disabled
-                            extension_info['enabled'] = preferences['extensions']['settings'][extension_id]['state'] == 1
-                        # If state is not found, keep the default (True)
-    except Exception as e:
-        # Default to True if there's any error reading the preferences
-        extension_info['enabled'] = True
+    # Check enabled status from cached profile settings (default True)
+    profile_dir = os.path.dirname(os.path.dirname(os.path.dirname(chrome_extension)))
+    extension_info['enabled'] = True
+    extension_settings = _get_chromium_extension_settings(profile_dir).get(extension_id, {})
+    state = extension_settings.get('state') if isinstance(extension_settings, dict) else None
+    if state in (0, 1):
+        extension_info['enabled'] = state == 1
         
     return extension_info
 
@@ -378,7 +384,7 @@ def process_firefox(firefox_extension, user, firefox_extension_path, profile=Non
                         extension_info['developer'] = creator
             elif locale_item == "homepageURL" and 'developer' not in extension_info:
                 homepage = firefox_extension['defaultLocale'][locale_item]
-                if 'github.com/' in homepage.lower():
+                if homepage and isinstance(homepage, str) and 'github.com/' in homepage.lower():
                     try:
                         github_user = homepage.split('github.com/')[1].split('/')[0]
                         if github_user and github_user not in ['topics', 'search']:
@@ -474,6 +480,10 @@ def process_firefox(firefox_extension, user, firefox_extension_path, profile=Non
     if profile:
         extension_info['profile'] = profile
     
+    # Ensure date_installed is always set (use file modification time as fallback)
+    if 'date_installed' not in extension_info:
+        extension_info['date_installed'] = str(int(os.path.getmtime(firefox_extension_path)))
+    
     return extension_info
 
 def process_safari(safari_plist_path, user):
@@ -487,20 +497,73 @@ def process_safari(safari_plist_path, user):
             safari_extensions = FoundationPlist.readPlist(safari_plist_path)
         except Exception as read_error:
             # If we get the specific "stream had too few bytes" error, just return empty list without logging
-            if "stream had too few bytes" in str(read_error):
+            # Convert error to string first to handle Objective-C bridge types (OC_PythonLong, etc.)
+            # tested with python 3.12.1
+            # For OC_PythonLong errors, just return empty list silently
+            try:
+                # Check error type first - but be defensive about using 'in' operator
+                try:
+                    error_type = type(read_error).__name__
+                    # Check if error type name contains OC_PythonLong - use try/except for safety
+                    try:
+                        if isinstance(error_type, str) and ("OC_PythonLong" in error_type or "PythonLong" in error_type):
+                            # OC_PythonLong error - just return empty, don't try to inspect it
+                            return extensions_list
+                    except TypeError:
+                        # Can't use 'in' operator - likely OC_PythonLong, return empty
+                        return extensions_list
+                except Exception:
+                    # If even getting the type name fails, return empty
+                    return extensions_list
+                
+                # Try to safely convert error to string
+                if isinstance(read_error, str):
+                    error_str = read_error
+                else:
+                    try:
+                        error_str = str(read_error)
+                        # Verify it's actually a string
+                        if not isinstance(error_str, str):
+                            # Not a real string - likely OC_PythonLong, return empty
+                            return extensions_list
+                    except (TypeError, AttributeError, ValueError):
+                        # Can't convert - likely OC_PythonLong, return empty
+                        return extensions_list
+                
+                # Now safely check if string contains the error message
+                if isinstance(error_str, str):
+                    try:
+                        # Use 'in' operator - catch TypeError if error_str is OC_PythonLong
+                        if "stream had too few bytes" in error_str:
+                            return extensions_list
+                    except (TypeError, AttributeError):
+                        # OC_PythonLong - can't use 'in' operator, just return empty
+                        return extensions_list
+            except Exception:
+                # If anything fails, just return empty list
+                # This handles all Objective-C bridge type issues
                 return extensions_list
-            # Otherwise, re-raise the exception
-            raise
+            # For other errors, don't re-raise - just return empty list to continue processing
+            return extensions_list
         
         # Process each extension in the plist
+        if not _is_plist_mapping(safari_extensions):
+            return extensions_list
+
         for extension_id, extension_data in safari_extensions.items():
+            # Some Safari plist entries can be Objective-C bridged scalar values
+            # (for example OC_PythonLong). Skip anything that is not a mapping.
+            if not _is_plist_mapping(extension_data):
+                continue
+
             extension_info = {}
             
             # Keep the original extension ID
             extension_info['extension_id'] = extension_id
             
             # Extract name from the key (e.g., com.example.extension -> Example)
-            clean_id = extension_id.split(' ')[0].split('(')[0]
+            extension_id_str = str(extension_id)
+            clean_id = extension_id_str.split(' ')[0].split('(')[0]
             name_parts = clean_id.split('.')[:-1]  # Ignore the last part
 
             # Try to get the extension name first
@@ -619,7 +682,7 @@ def process_safari(safari_plist_path, user):
             
             # Add description based on WebsiteAccess information if available
             description = ""
-            if 'WebsiteAccess' in extension_data:
+            if 'WebsiteAccess' in extension_data and _is_plist_mapping(extension_data['WebsiteAccess']):
                 website_access = extension_data['WebsiteAccess']
                 if 'Level' in website_access:
                     access_level = website_access['Level']
@@ -654,8 +717,41 @@ def process_safari(safari_plist_path, user):
             
     except Exception as e:
         # Only log serious errors, not just empty files
-        if "stream had too few bytes" not in str(e):
-            print(f"Error processing Safari extensions: {str(e)}")
+        # Convert error to string first to handle Objective-C bridge types (OC_PythonLong, etc.)
+        try:
+            # Safely convert error to string - handle OC_PythonLong
+            if isinstance(e, str):
+                error_str = e
+            else:
+                # Try to convert to string, but handle OC_PythonLong specially
+                try:
+                    error_str = str(e)
+                    # Check if str() returned an OC_PythonLong (it won't be a real string)
+                    if not isinstance(error_str, str):
+                        # OC_PythonLong - can't check contents, just log type
+                        print(f"Error processing Safari extensions: {type(e).__name__}")
+                        return extensions_list
+                except (TypeError, AttributeError, ValueError):
+                    print(f"Error processing Safari extensions: {type(e).__name__}")
+                    return extensions_list
+            
+            # Now safely check if string contains the error message
+            if isinstance(error_str, str):
+                try:
+                    # Use 'in' operator - catch TypeError if error_str is OC_PythonLong
+                    if "stream had too few bytes" not in error_str:
+                        # Use string concatenation instead of f-string to avoid OC_PythonLong issues
+                        try:
+                            print("Error processing Safari extensions: " + str(error_str))
+                        except Exception:
+                            # If printing fails, skip - likely OC_PythonLong issue
+                            pass
+                except (TypeError, AttributeError):
+                    # OC_PythonLong - can't use 'in' operator, skip logging
+                    pass
+        except (TypeError, AttributeError, ValueError):
+            # If we can't convert the error to string, just log a generic message
+            print(f"Error processing Safari extensions: {type(e).__name__}")
     
     return extensions_list
 
@@ -684,12 +780,18 @@ def process_browsers(users):
                     for chrome_extension in glob.glob(os.path.join(chrome_extension_path, "*", "*", "manifest.json")):
                         profile_info = "Default" if profile == "Default" else profile
                         extension_data = process_chrome(chrome_extension, user.replace("/Users/",""), "Google Chrome", profile_info)
+                        if not extension_data:
+                            continue
                         
                         # Create a unique key for this extension
                         unique_key = f"{extension_data['user']}|{extension_data['browser']}|{extension_data['profile']}|{extension_data['extension_id']}"
                         
                         # Only add if we haven't seen this extension before, or if it's newer
-                        if unique_key not in unique_extensions or int(float(extension_data['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
+                        # Handle missing date_installed field gracefully
+                        current_date = extension_data.get('date_installed', '0')
+                        existing_date = unique_extensions.get(unique_key, {}).get('date_installed', '0')
+                        
+                        if unique_key not in unique_extensions or int(float(current_date)) > int(float(existing_date)):
                             unique_extensions[unique_key] = extension_data
 
         # Check for Edge extensions in all profiles
@@ -707,12 +809,46 @@ def process_browsers(users):
                     for edge_extension in glob.glob(os.path.join(edge_extension_path, "*", "*", "manifest.json")):
                         profile_info = "Default" if profile == "Default" else profile
                         extension_data = process_chrome(edge_extension, user.replace("/Users/",""), "Microsoft Edge", profile_info)
+                        if not extension_data:
+                            continue
                         
                         # Create a unique key for this extension
                         unique_key = f"{extension_data['user']}|{extension_data['browser']}|{extension_data['profile']}|{extension_data['extension_id']}"
                         
                         # Only add if we haven't seen this extension before, or if it's newer
-                        if unique_key not in unique_extensions or int(float(extension_data['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
+                        # Handle missing date_installed field gracefully
+                        current_date = extension_data.get('date_installed', '0')
+                        existing_date = unique_extensions.get(unique_key, {}).get('date_installed', '0')
+                        
+                        if unique_key not in unique_extensions or int(float(current_date)) > int(float(existing_date)):
+                            unique_extensions[unique_key] = extension_data
+
+        # Check for Brave extensions in all profiles
+        brave_base_path = user+"/Library/Application Support/BraveSoftware/Brave-Browser/"
+        if os.path.isdir(brave_base_path):
+            # Get all profile directories (Default and any named profiles)
+            brave_profiles = [d for d in os.listdir(brave_base_path)
+                             if os.path.isdir(os.path.join(brave_base_path, d))
+                             and (d == "Default" or d.startswith("Profile"))]
+
+            for profile in brave_profiles:
+                brave_extension_path = os.path.join(brave_base_path, profile, "Extensions")
+                if os.path.isdir(brave_extension_path):
+                    for brave_extension in glob.glob(os.path.join(brave_extension_path, "*", "*", "manifest.json")):
+                        profile_info = "Default" if profile == "Default" else profile
+                        extension_data = process_chrome(brave_extension, user.replace("/Users/",""), "Brave", profile_info)
+                        if not extension_data:
+                            continue
+
+                        # Create a unique key for this extension
+                        unique_key = f"{extension_data['user']}|{extension_data['browser']}|{extension_data['profile']}|{extension_data['extension_id']}"
+
+                        # Only add if we haven't seen this extension before, or if it's newer
+                        # Handle missing date_installed field gracefully
+                        current_date = extension_data.get('date_installed', '0')
+                        existing_date = unique_extensions.get(unique_key, {}).get('date_installed', '0')
+
+                        if unique_key not in unique_extensions or int(float(current_date)) > int(float(existing_date)):
                             unique_extensions[unique_key] = extension_data
 
         # Check for Firefox extensions
@@ -729,13 +865,18 @@ def process_browsers(users):
                     unique_key = f"{extension_data['user']}|{extension_data['browser']}|{extension_data['profile']}|{extension_data['extension_id']}"
                     
                     # Only add if we haven't seen this extension before, or if it's newer
-                    if unique_key not in unique_extensions or int(float(extension_data['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
+                    # Handle missing date_installed field gracefully
+                    current_date = extension_data.get('date_installed', '0')
+                    existing_date = unique_extensions.get(unique_key, {}).get('date_installed', '0')
+                    
+                    if unique_key not in unique_extensions or int(float(current_date)) > int(float(existing_date)):
                         unique_extensions[unique_key] = extension_data
 
-        # Check for Safari extensions - using the original approach
+        # Check for Safari extensions - check multiple possible locations
         safari_extension_paths = [
             user+"/Library/Containers/com.apple.Safari/Data/Library/Safari/AppExtensions/Extensions.plist",
-            user+"/Library/Containers/com.apple.Safari/Data/Library/Safari/WebExtensions/Extensions.plist"
+            user+"/Library/Containers/com.apple.Safari/Data/Library/Safari/WebExtensions/Extensions.plist",
+            user+"/Library/Safari/Extensions/Extensions.plist"
         ]
 
         for safari_extension_path in safari_extension_paths:
@@ -750,11 +891,39 @@ def process_browsers(users):
                         # Create a unique key for this extension
                         unique_key = f"{extension['user']}|{extension['browser']}|{extension['profile']}|{extension['extension_id']}"
                         # Only add if we haven't seen this extension before, or if it's newer
-                        if unique_key not in unique_extensions or int(float(extension['date_installed'])) > int(float(unique_extensions[unique_key]['date_installed'])):
+                        # Handle missing date_installed field gracefully
+                        current_date = extension.get('date_installed', '0')
+                        existing_date = unique_extensions.get(unique_key, {}).get('date_installed', '0')
+                        
+                        if unique_key not in unique_extensions or int(float(current_date)) > int(float(existing_date)):
                             unique_extensions[unique_key] = extension
                 except Exception as e:
-                    # Log all errors
-                    pass
+                    # Log errors for debugging (but continue processing other paths)
+                    # Note: Safari extensions require Full Disk Access permissions
+                    # If you see errors here, grant Full Disk Access to munkireport-python3
+                    # tested with python 3.12.1
+                    # Note: OC_PythonLong errors are harmless - they occur when FoundationPlist
+                    # raises an exception with OC_PythonLong objects. We silently skip these.
+                    import sys
+                    # Silently skip OC_PythonLong errors - they're harmless
+                    # The error "argument of type 'OC_PythonLong' is not iterable" occurs
+                    # when we try to inspect the exception object. We catch and ignore it.
+                    # Use a very simple approach - just try to get error type name, don't inspect the message
+                    try:
+                        error_type_name = type(e).__name__
+                        # Only log if it's not a known OC_PythonLong issue
+                        # Don't try to convert to string or check contents - that triggers the error
+                        if error_type_name not in ['TypeError', 'AttributeError']:
+                            # Might be a real error - try to log just the type
+                            try:
+                                print("Error processing Safari extensions from " + str(safari_extension_path) + ": " + error_type_name, file=sys.stderr)
+                            except Exception:
+                                # If even this fails, skip - likely OC_PythonLong issue
+                                pass
+                    except Exception:
+                        # If anything fails in error handling, just skip - likely OC_PythonLong issue
+                        # This prevents infinite recursion of error handling
+                        pass
 
     # Convert the dictionary of unique extensions to a list
     out = list(unique_extensions.values())

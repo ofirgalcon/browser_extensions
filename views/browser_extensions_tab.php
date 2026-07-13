@@ -1,12 +1,12 @@
 <div id="browser_extensions-tab"></div>
 <div id="lister" style="font-size: large; float: right;">
     <a href="/show/listing/browser_extensions/browser_extensions" title="List">
-        <i class="btn btn-default tab-btn fa fa-list"></i>
+        <i class="btn btn-default tab-btn fa fa-list-alt"></i>
     </a>
 </div>
 <div id="report_btn" style="font-size: large; float: right;">
     <a href="/show/report/browser_extensions/browser_extensions_report" title="Report">
-        <i class="btn btn-default tab-btn fa fa-th"></i>
+        <i class="btn btn-default tab-btn fa fa-bar-chart-o"></i>
     </a>
 </div>
 <h2><i class="fa fa-puzzle-piece"></i> <span data-i18n="browser_extensions.browser_extensions"></span></h2>
@@ -37,6 +37,9 @@
             <a data-toggle="tab" data-target="#edge-subtab"><i class="fa fa-internet-explorer"></i> Edge</a>
         </li>
         <li>
+            <a data-toggle="tab" data-target="#brave-subtab"><i class="fa-brands fa-brave"></i> Brave</a>
+        </li>
+        <li>
             <a data-toggle="tab" data-target="#firefox-subtab"><i class="fa fa-firefox"></i> Firefox</a>
         </li>
         <li>
@@ -46,6 +49,7 @@
     <div class="tab-content" style="margin-top: 24px;">
         <div id="chrome-subtab" class="tab-pane fade in active"></div>
         <div id="edge-subtab" class="tab-pane fade"></div>
+        <div id="brave-subtab" class="tab-pane fade"></div>
         <div id="firefox-subtab" class="tab-pane fade"></div>
         <div id="safari-subtab" class="tab-pane fade"></div>
     </div>
@@ -53,6 +57,10 @@
 
 <script>
 $(document).on('appReady', function(){
+	function escapeHtml(value) {
+		return $('<div>').text(value == null ? '' : String(value)).html();
+	}
+
 	// Get the original hash when the page loads
 	const originalHash = window.location.hash || '#tab_browser_extensions-tab';
 
@@ -60,10 +68,8 @@ $(document).on('appReady', function(){
 	$('#browser_extensions-tab-content .nav-tabs a').on('click', function (e) {
 		e.preventDefault();
 		$(this).tab('show');
-		// Restore the original hash
-		if (window.location.hash !== originalHash) {
-			history.pushState(null, null, originalHash);
-		}
+		// Ensure the hash is set to the browser_extensions tab
+		history.pushState(null, null, '#tab_browser_extensions-tab');
 	});
 
 	$.getJSON(appUrl + '/module/browser_extensions/get_data/' + serialNumber, function(data){
@@ -86,6 +92,7 @@ $(document).on('appReady', function(){
 			const chromeExtensions = [];
 			const firefoxExtensions = [];
 			const edgeExtensions = [];
+			const braveExtensions = [];
 			const safariExtensions = [];
 			
 			// Process each extension and add to the appropriate array
@@ -110,7 +117,7 @@ $(document).on('appReady', function(){
 							var date = new Date(d[prop] * 1000);
 							rows += '<tr><th>'+i18n.t('browser_extensions.'+prop)+'</th><td><span title="'+moment(date).fromNow()+'">'+moment(date).format('llll')+'</span></td></tr>';
 						} else {
-							rows += '<tr><th>'+i18n.t('browser_extensions.'+prop)+'</th><td>'+d[prop]+'</td></tr>';
+							rows += '<tr><th>'+i18n.t('browser_extensions.'+prop)+'</th><td>'+escapeHtml(d[prop])+'</td></tr>';
 						}
 					}
 				});
@@ -123,7 +130,7 @@ $(document).on('appReady', function(){
 						} else if (prop === 'enabled' && d[prop] == 0) {
 							rows += '<tr><th>'+i18n.t('browser_extensions.'+prop)+'</th><td>'+i18n.t('no')+'</td></tr>';
 						} else {
-							rows += '<tr><th>'+i18n.t('browser_extensions.'+prop)+'</th><td>'+d[prop]+'</td></tr>';
+							rows += '<tr><th>'+i18n.t('browser_extensions.'+prop)+'</th><td>'+escapeHtml(d[prop])+'</td></tr>';
 						}
 					}
 				});
@@ -139,11 +146,13 @@ $(document).on('appReady', function(){
                     extensionHtml += '<i class="fa fa-firefox"></i> ';
                 } else if (d.browser === "Microsoft Edge") {
                     extensionHtml += '<i class="fa fa-internet-explorer"></i> ';
+                } else if (d.browser === "Brave") {
+                    extensionHtml += '<i class="fa-brands fa-brave"></i> ';
                 } else if (d.browser === "Safari") {
                     extensionHtml += '<i class="fa fa-safari"></i> ';
                 }
                 
-                extensionHtml += d.name + '</h4>' +
+                extensionHtml += escapeHtml(d.name) + '</h4>' +
 					'<div style="max-width:900px;">' +
 					'<table class="table table-striped table-condensed">' +
 					'<tbody>' + rows + '</tbody>' +
@@ -158,6 +167,8 @@ $(document).on('appReady', function(){
 					firefoxExtensions.push(extensionHtml);
 				} else if (d.browser === "Microsoft Edge") {
 					edgeExtensions.push(extensionHtml);
+				} else if (d.browser === "Brave") {
+					braveExtensions.push(extensionHtml);
 				} else if (d.browser === "Safari") {
 					safariExtensions.push(extensionHtml);
 				}
@@ -166,12 +177,14 @@ $(document).on('appReady', function(){
 			// Add browser counts to tab labels
 			$('#browser_extensions-tab-content .nav-tabs a[data-target="#chrome-subtab"]').append(' <span class="badge">' + chromeExtensions.length + '</span>');
 			$('#browser_extensions-tab-content .nav-tabs a[data-target="#edge-subtab"]').append(' <span class="badge">' + edgeExtensions.length + '</span>');
+			$('#browser_extensions-tab-content .nav-tabs a[data-target="#brave-subtab"]').append(' <span class="badge">' + braveExtensions.length + '</span>');
 			$('#browser_extensions-tab-content .nav-tabs a[data-target="#firefox-subtab"]').append(' <span class="badge">' + firefoxExtensions.length + '</span>');
 			$('#browser_extensions-tab-content .nav-tabs a[data-target="#safari-subtab"]').append(' <span class="badge">' + safariExtensions.length + '</span>');
 
 			// Insert the extensions into their respective tabs
 			$('#chrome-subtab').html(chromeExtensions.length ? chromeExtensions.join('') : '<div class="alert alert-info">No Chrome extensions found</div>');
 			$('#edge-subtab').html(edgeExtensions.length ? edgeExtensions.join('') : '<div class="alert alert-info">No Edge extensions found</div>');
+			$('#brave-subtab').html(braveExtensions.length ? braveExtensions.join('') : '<div class="alert alert-info">No Brave extensions found</div>');
 			$('#firefox-subtab').html(firefoxExtensions.length ? firefoxExtensions.join('') : '<div class="alert alert-info">No Firefox extensions found</div>');
 			$('#safari-subtab').html(safariExtensions.length ? safariExtensions.join('') : '<div class="alert alert-info">No Safari extensions found</div>');
 		}
